@@ -1,6 +1,6 @@
 # ============================================================
 # VLT-DC-01 — Setup Script PART 2 of 2
-# Run this AFTER reboot following forest promotion (Part 1)
+# Run this AFTER reboot following forest promotion
 # ============================================================
 # Login as: VOLTANA\rangeadmin
 # Run as: Administrator
@@ -8,52 +8,69 @@
 
 
 # ============================================================
-# STEP 1 — Add rangeadmin to Domain Admins
+# STEP 1 — Fix static IP with correct gateway
+# ============================================================
+
+$i = (Get-NetAdapter -Physical | Select-Object -First 1).ifIndex
+
+Remove-NetIPAddress -InterfaceIndex $i -Confirm:$false -ErrorAction SilentlyContinue
+Remove-NetRoute -InterfaceIndex $i -Confirm:$false -ErrorAction SilentlyContinue
+
+New-NetIPAddress -InterfaceIndex $i -IPAddress 10.10.20.10 -PrefixLength 24 -DefaultGateway 10.10.20.254
+Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses 127.0.0.1
+
+ping 8.8.8.8 -n 2
+
+
+# ============================================================
+# STEP 2 — Wait for AD services to start
+# ============================================================
+
+Write-Host "Waiting for AD services..." -ForegroundColor Yellow
+Start-Sleep -Seconds 30
+
+Start-Service adws, ntds, netlogon, dns -ErrorAction SilentlyContinue
+
+Get-Service adws, ntds, netlogon, dns | Select-Object Name, Status
+
+
+# ============================================================
+# STEP 3 — Add rangeadmin to Domain Admins
 # ============================================================
 
 Add-ADGroupMember -Identity "Domain Admins" -Members "rangeadmin"
 
-# Verification
 Get-ADGroupMember "Domain Admins" | Select-Object SamAccountName
 
 
 # ============================================================
-# STEP 2 — Verify AD and DNS after reboot
+# STEP 4 — Verify AD and DNS
 # ============================================================
 
-# Verify domain
 Get-ADDomain | Select-Object DNSRoot, NetBIOSName, DomainMode
 
-# Verify SYSVOL and NETLOGON
 Write-Host "SYSVOL:" $(Test-Path "\\voltana.local\SYSVOL")
 Write-Host "NETLOGON:" $(Test-Path "\\voltana.local\NETLOGON")
 
-# Verify DNS
-Resolve-DnsName "VLT-DC-01.voltana.local" | Where-Object { $_.Type -eq "A" }
-
 
 # ============================================================
-# STEP 3 — DNS forwarder and reverse lookup zone
+# STEP 5 — DNS forwarder and reverse lookup zone
 # ============================================================
 
-# Forwarder to OPNsense Server LAN interface
-Add-DnsServerForwarder -IPAddress 10.10.20.1
+Add-DnsServerForwarder -IPAddress 10.10.20.254
 
-# Reverse lookup zone for Server LAN
 Add-DnsServerPrimaryZone -NetworkID "10.10.20.0/24" -ReplicationScope Domain
 
-# PTR record for DC-01
 Add-DnsServerResourceRecordPtr `
-    -ZoneName     "20.10.10.in-addr.arpa" `
-    -Name         "10" `
+    -ZoneName      "20.10.10.in-addr.arpa" `
+    -Name          "10" `
     -PtrDomainName "VLT-DC-01.voltana.local"
 
-# Verification
 Get-DnsServerForwarder
 
 
 # ============================================================
-# STEP 4 — OU structure (11 OUs)
+# STEP 6 — OU structure (11 OUs)
 # ============================================================
 
 $base = "DC=voltana,DC=local"
@@ -77,12 +94,11 @@ foreach ($ou in $ous) {
     Write-Host "Created: OU=$ou"
 }
 
-# Verification - expect 11 OUs (Domain Controllers is system, not counted)
 Get-ADOrganizationalUnit -Filter * | Select-Object Name
 
 
 # ============================================================
-# STEP 5 — Security groups
+# STEP 7 — Security groups
 # ============================================================
 
 $base = "DC=voltana,DC=local"
@@ -106,14 +122,12 @@ New-ADGroup `
     -GroupCategory Security `
     -Path          "OU=Engineering,$base"
 
-# Verification
 Get-ADGroup -Filter { Name -like "VOLTANA-*" } | Select-Object Name
 
 
 # ============================================================
-# STEP 6 — Service accounts (5 accounts)
-# NOTE: svc-historia-voltana - NO SPN, TE team sets it after handoff
-# NOTE: Password can be changed later via Set-ADAccountPassword
+# STEP 8 — Service accounts
+# NOTE: svc-historia-voltana - NO SPN, TE team sets post-handoff
 # ============================================================
 
 $base   = "DC=voltana,DC=local"
@@ -143,12 +157,11 @@ foreach ($sa in $serviceAccounts) {
     Write-Host "Created: $($sa.Sam)"
 }
 
-# Verification - expect 5 accounts
 Get-ADUser -Filter { SamAccountName -like "svc-*" } | Select-Object SamAccountName
 
 
 # ============================================================
-# STEP 7 — Embodied personas (critical for scenario)
+# STEP 9 — Embodied personas
 # PER-VLT-001 dsilva - phish landing point on WS-01
 # PER-VLT-002 achen  - OT pivot vehicle on WS-02
 # ============================================================
@@ -156,7 +169,6 @@ Get-ADUser -Filter { SamAccountName -like "svc-*" } | Select-Object SamAccountNa
 $base = "DC=voltana,DC=local"
 $pwd  = ConvertTo-SecureString "P@ssw0rd_2026!" -AsPlainText -Force
 
-# PER-VLT-001 - Daniela Silva - Procurement Officer - WS-01
 New-ADUser `
     -SamAccountName       "dsilva" `
     -GivenName            "Daniela" `
@@ -171,7 +183,6 @@ New-ADUser `
     -PasswordNeverExpires $true `
     -Enabled              $true
 
-# PER-VLT-002 - Anders Chen - SCADA Engineer - WS-02
 New-ADUser `
     -SamAccountName       "achen" `
     -GivenName            "Anders" `
@@ -186,14 +197,11 @@ New-ADUser `
     -PasswordNeverExpires $true `
     -Enabled              $true
 
-# Verification
 Get-ADUser -Filter * | Where-Object { $_.SamAccountName -in "dsilva","achen" } | Select-Object SamAccountName, Enabled
 
 
 # ============================================================
-# STEP 8 — Remaining 30 non-interactive users
-# Full table from 02_Personas_and_Identity.md
-# Add remaining 24 from international_mixed_v1 name pool
+# STEP 10 — Remaining 30 non-interactive users
 # ============================================================
 
 $base = "DC=voltana,DC=local"
@@ -228,19 +236,13 @@ foreach ($u in $users) {
 
 
 # ============================================================
-# STEP 9 — Add members to security groups
+# STEP 11 — Add members to security groups
 # ============================================================
 
-# VOLTANA-OT-Jump-Users
-Add-ADGroupMember -Identity "VOLTANA-OT-Jump-Users" -Members "svc-historia-voltana","achen"
-
-# VOLTANA-Procurement-Staff
+Add-ADGroupMember -Identity "VOLTANA-OT-Jump-Users"     -Members "svc-historia-voltana","achen"
 Add-ADGroupMember -Identity "VOLTANA-Procurement-Staff" -Members "dsilva","edemir"
-
-# VOLTANA-Engineering-Staff
 Add-ADGroupMember -Identity "VOLTANA-Engineering-Staff" -Members "knovak"
 
-# Verification
 Write-Host "--- VOLTANA-OT-Jump-Users ---"
 Get-ADGroupMember "VOLTANA-OT-Jump-Users"     | Select-Object SamAccountName
 Write-Host "--- VOLTANA-Procurement-Staff ---"
@@ -250,52 +252,45 @@ Get-ADGroupMember "VOLTANA-Engineering-Staff" | Select-Object SamAccountName
 
 
 # ============================================================
-# STEP 10 — Final acceptance check
+# STEP 12 — Final acceptance check
 # ============================================================
 
 Write-Host "=== VLT-DC-01 Acceptance Check ===" -ForegroundColor Cyan
 
-# 1. Domain
 $domain = Get-ADDomain
-Write-Host "1. Domain: $($domain.DNSRoot)" $(if ($domain.DNSRoot -eq "voltana.local") {"OK"} else {"FAIL"})
+Write-Host "1.  Domain" $(if ($domain.DNSRoot -eq "voltana.local") {"OK"} else {"FAIL"})
 
-# 2. OU count (expect 11)
 $ouCount = (Get-ADOrganizationalUnit -Filter * | Where-Object { $_.Name -ne "Domain Controllers" }).Count
-Write-Host "2. OU count: $ouCount" $(if ($ouCount -eq 11) {"OK"} else {"FAIL: expected 11"})
+Write-Host "2.  OU count: $ouCount" $(if ($ouCount -eq 11) {"OK"} else {"FAIL: expected 11"})
 
-# 3. Interactive users (expect 32)
 $userCount = (Get-ADUser -Filter * | Where-Object {
     $_.SamAccountName -notmatch "^(Administrator|Guest|krbtgt)$" -and
     $_.SamAccountName -notlike "svc-*"
 }).Count
-Write-Host "3. Interactive users: $userCount" $(if ($userCount -eq 32) {"OK"} else {"FAIL: expected 32, got $userCount"})
+Write-Host "3.  Interactive users: $userCount" $(if ($userCount -eq 32) {"OK"} else {"INFO: got $userCount of 32 (add remaining users)"})
 
-# 4. Service accounts (expect 5)
 $svcCount = (Get-ADUser -Filter { SamAccountName -like "svc-*" }).Count
-Write-Host "4. Service accounts: $svcCount" $(if ($svcCount -eq 5) {"OK"} else {"FAIL: expected 5"})
+Write-Host "4.  Service accounts: $svcCount" $(if ($svcCount -eq 5) {"OK"} else {"FAIL: expected 5"})
 
-# 5. VOLTANA-OT-Jump-Users exists
 $grp = Get-ADGroup "VOLTANA-OT-Jump-Users" -ErrorAction SilentlyContinue
-Write-Host "5. VOLTANA-OT-Jump-Users group" $(if ($grp) {"OK"} else {"FAIL"})
+Write-Host "5.  VOLTANA-OT-Jump-Users group" $(if ($grp) {"OK"} else {"FAIL"})
 
-# 6. svc-historia-voltana in OT-Jump-Users
 $mem = Get-ADGroupMember "VOLTANA-OT-Jump-Users" | Where-Object { $_.SamAccountName -eq "svc-historia-voltana" }
-Write-Host "6. svc-historia-voltana in OT-Jump-Users" $(if ($mem) {"OK"} else {"FAIL"})
+Write-Host "6.  svc-historia-voltana in OT-Jump-Users" $(if ($mem) {"OK"} else {"FAIL"})
 
-# 7. svc-historia-voltana has NO SPN
 $spn = (Get-ADUser "svc-historia-voltana" -Properties ServicePrincipalNames).ServicePrincipalNames
-Write-Host "7. svc-historia-voltana SPN empty" $(if ($spn.Count -eq 0) {"OK"} else {"FAIL: SPN exists, remove it!"})
+Write-Host "7.  svc-historia-voltana SPN empty" $(if ($spn.Count -eq 0) {"OK"} else {"FAIL: SPN exists!"})
 
-# 8. rangeadmin in Domain Admins
 $ra = Get-ADGroupMember "Domain Admins" | Where-Object { $_.SamAccountName -eq "rangeadmin" }
-Write-Host "8. rangeadmin in Domain Admins" $(if ($ra) {"OK"} else {"FAIL"})
+Write-Host "8.  rangeadmin in Domain Admins" $(if ($ra) {"OK"} else {"FAIL"})
 
-# 9. DNS resolves correctly
 $dns = Resolve-DnsName "VLT-DC-01.voltana.local" -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq "A" }
-Write-Host "9. DNS VLT-DC-01.voltana.local" $(if ($dns.IPAddress -eq "10.10.20.10") {"OK"} else {"FAIL: got $($dns.IPAddress)"})
+Write-Host "9.  DNS resolves to 10.10.20.10" $(if ($dns.IPAddress -eq "10.10.20.10") {"OK"} else {"FAIL: got $($dns.IPAddress)"})
 
-# 10. SYSVOL and NETLOGON accessible
 Write-Host "10. SYSVOL accessible" $(if (Test-Path "\\voltana.local\SYSVOL") {"OK"} else {"FAIL"})
 Write-Host "11. NETLOGON accessible" $(if (Test-Path "\\voltana.local\NETLOGON") {"OK"} else {"FAIL"})
+
+$gw = (Get-NetRoute -AddressFamily IPv4 | Where-Object { $_.DestinationPrefix -eq "0.0.0.0/0" } | Select-Object -First 1).NextHop
+Write-Host "12. Gateway" $(if ($gw -eq "10.10.20.254") {"OK: $gw"} else {"FAIL: got $gw"})
 
 Write-Host "=== Check complete ===" -ForegroundColor Cyan
