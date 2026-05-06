@@ -307,18 +307,18 @@ Write-Host "1. Domain: $($domain.DNSRoot)" $(if ($domain.DNSRoot -eq "voltana.lo
 
 # 2. OU count (expect 11)
 $ouCount = (Get-ADOrganizationalUnit -Filter * | Where-Object { $_.Name -ne "Domain Controllers" }).Count
-Write-Host "2. OU count: $ouCount" $(if ($ouCount -eq 11) {"OK"} else {"FAIL — expected 11"})
+Write-Host "2. OU count: $ouCount" $(if ($ouCount -eq 11) {"OK"} else {"FAIL: expected 11"})
 
 # 3. Interactive users (expect 32)
 $userCount = (Get-ADUser -Filter * | Where-Object {
     $_.SamAccountName -notmatch "^(Administrator|Guest|krbtgt)$" -and
     $_.SamAccountName -notlike "svc-*"
 }).Count
-Write-Host "3. Interactive users: $userCount" $(if ($userCount -eq 32) {"OK"} else {"FAIL — expected 32, got $userCount"})
+Write-Host "3. Interactive users: $userCount" $(if ($userCount -eq 32) {"OK"} else {"FAIL: expected 32, got $userCount"})
 
 # 4. Service accounts (expect 5)
 $svcCount = (Get-ADUser -Filter { SamAccountName -like "svc-*" }).Count
-Write-Host "4. Service accounts: $svcCount" $(if ($svcCount -eq 5) {"OK"} else {"FAIL — expected 5"})
+Write-Host "4. Service accounts: $svcCount" $(if ($svcCount -eq 5) {"OK"} else {"FAIL: expected 5"})
 
 # 5. VOLTANA-OT-Jump-Users exists
 $grp = Get-ADGroup "VOLTANA-OT-Jump-Users" -ErrorAction SilentlyContinue
@@ -330,11 +330,11 @@ Write-Host "6. svc-historia-voltana in OT-Jump-Users" $(if ($mem) {"OK"} else {"
 
 # 7. svc-historia-voltana has NO SPN
 $spn = (Get-ADUser "svc-historia-voltana" -Properties ServicePrincipalNames).ServicePrincipalNames
-Write-Host "7. svc-historia-voltana SPN empty" $(if ($spn.Count -eq 0) {"OK"} else {"FAIL — SPN exists, remove it!"})
+Write-Host "7. svc-historia-voltana SPN empty" $(if ($spn.Count -eq 0) {"OK"} else {"FAIL: SPN exists, remove it!"})
 
 # 8. DNS resolves correctly
 $dns = Resolve-DnsName "VLT-DC-01.voltana.local" -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq "A" }
-Write-Host "8. DNS VLT-DC-01.voltana.local" $(if ($dns.IPAddress -eq "10.10.20.10") {"OK"} else {"FAIL — got $($dns.IPAddress)"})
+Write-Host "8. DNS VLT-DC-01.voltana.local" $(if ($dns.IPAddress -eq "10.10.20.10") {"OK"} else {"FAIL: got $($dns.IPAddress)"})
 
 # 9. SYSVOL and NETLOGON accessible
 Write-Host "9. SYSVOL accessible" $(if (Test-Path "\\voltana.local\SYSVOL") {"OK"} else {"FAIL"})
